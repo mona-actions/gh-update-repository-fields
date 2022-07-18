@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+set -e
+
+################################################################################
+#### Function PrintUsage #######################################################
+PrintUsage() {
+    cat <<EOM
+Usage: gh update-repository-fields [options]
+Options:
+    -h, --help                    : Show script help
+    -desc, --description          : Set description field for GitHub repositories. Looks for DESCRPTION environment
+                                    variable if omitted
+    -u, --url                     : Set destination GitHub URL (e.g. https://github.example.com) Looks for GHE_URL environment
+                                    variable if omitted or defaults to https://github.com                                 
+    -o, --organization            : Set organization to update information from -- Looks for ORGANIZATION environment
+                                    variable if omitted
+    -t, --token                   : Set token used to perform actions - Look for GH_TOKEN
+                                    variable if omitted
+Description:
+gh-update-repository-fields updates all the repositories under an organization -- currently only support description
+Example:
+  gh update-repository-fields -u https://ghes-url.com -o my-org -t ABCDEFG1234567
+EOM
+  exit 0
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --verbose)
+    verbose=1
+    ;;
+  -desc|--description)
+    DESCRIPTION=$2
+    shift
+    ;;
+  -u|--url)
+    GHE_URL=$2
+    shift
+    ;;
+  -o|--organization)
+    ORGANIZATION=$2
+    shift
+    ;;
+  -t|--token)
+   GH_TOKEN=$2
+   shift
+   ;;
+  -h|--help)
+    PrintUsage
+    ;;
+  esac
+  shift
+done
+
+####################################################################
+### Funtion GetGHEURL ##############################################
+GetGHEURL() {
+  echo ""
+  echo "#########################################################################"
+  echo "Need to check whether GitHub organization is in GitHub.com or GHES"
+  echo "#########################################################################"
+   #####################################
+   # Check if we have a source url set #
+   #####################################
+   if [[ -z ${GHE_URL} ]]; then
+     echo ""
+     echo "------------------------------------"
+     echo "Is your oranization in GHES?"
+     echo "Type [y] for yes and [n] for no."
+     echo "Followed with the [Enter] key."
+     ########################
+     # Read input from user #
+     #######################
+     read -r CONFIRM_GHE_URL
+
+     if [[ "${CONFIRM_GHE_URL}" == 'y' ]]; then
+       CONFIRM_CORRECT_GHES="n"
+
+       while [ "${CONFIRM_CORRECT_GHES}" != "y" ]; do
+         echo "Please type in your GHES URL (e.g. https://ghes-url.com)"
+         echo "Followed with the [Enter] key."
+         read -r SOURCE_URL
+
+         echo "GHES URL:[${GHE_URL}]"
+         echo "Is your GHES URL correct?"
+         echo "Type [y] for yes and [n] for no."
+         echo "Followed with the [Enter] key."
+
+         read -r CONFIRM_CORRECT_GHES
+        done
+    else
+      echo "Alright. We will use GHEC API for your source instance"
+      GHE_URL=https://github.com
+    fi
+   fi
+
+  ############################################
+  # Clean any whitespace that may be entered #
+  ############################################
+  GHE_URL_NO_WHITESPACE="$(echo -e "${GHE_URL}" | tr -d '[:space:]')"
+  GHE_URL=$GHE_URL_NO_WHITESPACE
+
+  if [[ "${GHE_URL}" == "https://github.com" ]]; then
+    API_URL="https://api.github.com"
+  else
+    API_URL="${GHE_URL}/api/v3"
+  fi
+
+    echo ""
+    echo "GHE  URL: $GHE_URL"
+    echo "GHE API URL: $API_URL"
+}
+
+####################################################################
+### Funtion GetPersonalAccessToken ################################
+GetPersonalAccessToken() {
+  ############################
+   # Check if we have a  token #
+   ############################
+   if [[ -z ${GH_TOKEN} ]]; then
+     ########################################
+     # Get the GitHub Personal Access Token #
+     #######################################
+     echo ""
+     echo "------------------------------------"
+     echo "Please create a GitHub Personal Access token used to gather"
+     echo "information from your organization, with a scope of all 'repo' and 'admin:org' permission"
+     echo "followed by [ENTER]:"
+     echo "(note: your input will NOT be displayed)"
+     ########################
+     # Read input from user #
+     #######################
+     read -rs GH_TOKEN
+   fi
+
+     ##########################################
+     # Check the length of the PAT for sanity #
+     ##########################################
+     if [ ${#GH_TOKEN} -ne 40 ]; then
+       echo "GitHub PAT are 40 characters in length! Your PAT has ${#GH_TOKEN_DEST} characters!"
+       exit 1
+     fi
+}
+
+####################################################################
+### Funtion GetOrganization ################################
+GetOrganization() {
+  ###########################
+  # Check organization #
+  ###########################
+  if [[ -z ${ORGANIZATION} ]]; then
+    ###########################################
+    # Get the name of the GitHub soure Organization #
+    ###########################################
+    echo ""
+    echo "------------------------------------------------------"
+    echo "Please enter name of the GitHub Organization to perform operations"
+    echo "Followed with the [ENTER] key."
+    ########################
+    # Read input from user #
+    ########################
+    read -r ORGANIZATION
+
+    # Clean any whitespace that may be enetered
+    ORG_NAME_NO_WHITESPACE="$(echo -e "${ORGANIZATION}" | tr -d '[:space:]')"
+    ORGANIZATION="${ORG_NAME_NO_WHITESPACE}"
+
+    #########################
+    # Validate the Org Name #
+    #########################
+    if [ ${#ORGANIZATION} -le 1 ]; then
+      echo "Error! You must give a valid Organization name!"
+      exit 1
+    fi
+  fi
+
+}
+
+####################################################################
+### Funtion GetDescription ##############################################
+GetDescription() {
+  echo ""
+  echo "#########################################################################"
+  echo "Need to get global description for all repositories"
+  echo "#########################################################################"
+     ########################################
+     # Get the GitHub Description #
+     #######################################
+     echo ""
+     echo "------------------------------------"
+     echo "Do you want to update the description for all repositories?"
+     echo "Type [y] for yes and [n] for no."
+     echo "Followed with the [Enter] key."
+     ########################
+     # Read input from user #
+     #######################
+     read -r CONFIRM_UPDATE_DESCRIPTION
+
+     if [[ "${CONFIRM_UPDATE_DESCRIPTION}" == 'y' ]]; then
+       CONFIRM_CORRECT_UPDATE_DESCRIPTION="n"
+
+       while [ "${CONFIRM_CORRECT_UPDATE_DESCRIPTION}" != "y" ]; do
+         echo "Please type in your description for all of your repositories"
+         echo "Followed with the [Enter] key."
+         read -r DESCRIPTION
+
+         echo "Repo Description:[${DESCRIPTION}]"
+         echo "Is your repository description correct?"
+         echo "Type [y] for yes and [n] for no."
+         echo "Followed with the [Enter] key."
+
+         read -r CONFIRM_CORRECT_UPDATE_DESCRIPTION
+        done
+    else
+      echo "Alright. We will make all of your repository description empty"
+      DESCRIPTION=""
+    fi
+
+    echo ""
+    echo "Repository Description: $DESCRIPTION"
+}
+
+#####################################################################
+##### Function UpdateRepositories ########################################
+UpdateRepositories() {
+  echo ""
+  echo "######################################################"
+  echo "Getting the repo permissions from your organization"
+  echo "######################################################"
+
+  echo "API URL: $API_URL"
+  echo "GH_TOKEN: $GH_TOKEN"
+  echo "ORGANIZATION: $ORGANIZATION"
+
+  REPOS=$(curl -X GET \
+  -H "Accept: application/vnd.github.v3+json" \
+  -H "authorization: bearer $GH_TOKEN" \
+  $API_URL/orgs/$ORGANIZATION/repos | jq -r '.[].name')
+  
+  while read REPO;
+    do
+        RESPONSE=$(curl -s \
+        -X PATCH \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: token $GH_TOKEN" \
+        "$API_URL"/repos/"$ORGANIZATION"/"$REPO" \
+        -d "{\"description\":\"$DESCRIPTION\"}" | jq -r '.' 2>&1)
+
+  done <<< $REPOS
+
+}
+
+#####################################################################
+#### Function GraphicArt ################################################
+GraphicArt() {
+  echo ""
+  echo "##############################################################"
+  echo "         GitHub Update repository fields                      "
+  cat << "EOF"
+.------------------------------------------------------------------------------.
+|                             .mmMMMMMMMMMMMMMmm.                              |
+|                         .mMMMMMMMMMMMMMMMMMMMMMMMm.                          |
+|                      .mMMMMMMMMMMMMMMMMMMMMMMMMMMMMMm.                       |
+|                    .MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.                     |
+|                  .MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.                   |
+|                 MMMMMMMM'  `"MMMMM"""""""MMMM""`  'MMMMMMMM                  |
+|                MMMMMMMMM                           MMMMMMMMM                 |
+|               MMMMMMMMMM:                         :MMMMMMMMMM                |
+|              .MMMMMMMMMM                           MMMMMMMMMM.               |
+|              MMMMMMMMM"                             "MMMMMMMMM               |
+|              MMMMMMMMM                               MMMMMMMMM               |
+|              MMMMMMMMM                               MMMMMMMMM               |
+|              MMMMMMMMMM                             MMMMMMMMMM               |
+|              `MMMMMMMMMM                           MMMMMMMMMM`               |
+|               MMMMMMMMMMMM.                     .MMMMMMMMMMMM                |
+|                MMMMMM  MMMMMMMMMM         MMMMMMMMMMMMMMMMMM                 |
+|                 MMMMMM  'MMMMMMM           MMMMMMMMMMMMMMMM                  |
+|                  `MMMMMM  "MMMMM           MMMMMMMMMMMMMM`                   |
+|                    `MMMMMm                 MMMMMMMMMMMM`                     |
+|                      `"MMMMMMMMM           MMMMMMMMM"`                       |
+|                         `"MMMMMM           MMMMMM"`                          |
+|                             `""M           M""`                              |
+'------------------------------------------------------------------------------'
+EOF
+}
+
+###########
+# Defaults #
+############
+GH_TOKEN=${GH_TOKEN:-}
+GHE_URL=${GHE_URL:-}
+ORGANIZATION=${ORGANIZATION:-}
+
+#####################################################################
+#### Function Header ################################################
+Header() {
+  GraphicArt
+}
+
+##########
+# HEADER #
+##########
+Header
+
+#####################################################################
+######################## MAIN #######################################
+#####################################################################
+GetGHEURL
+GetOrganization
+GetPersonalAccessToken
+GetDescription
+UpdateRepositories
